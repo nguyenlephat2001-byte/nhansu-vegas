@@ -5,7 +5,10 @@ window.VegasCapture=window.VegasCapture||(()=>{
  const LIB='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/dist/face-api.js',MODELS='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model';
  let ready=null;
  const loadScript=src=>new Promise((ok,bad)=>{if(window.faceapi)return ok();const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>bad(new Error('Không tải được bộ nhận diện khuôn mặt. Kiểm tra mạng.'));document.head.append(s);});
- const loadFace=()=>ready||(ready=(async()=>{await loadScript(LIB);const f=window.faceapi;await Promise.all([f.nets.tinyFaceDetector.loadFromUri(MODELS),f.nets.faceLandmark68Net.loadFromUri(MODELS),f.nets.faceRecognitionNet.loadFromUri(MODELS)]);return f;})().catch(e=>{ready=null;throw e;}));
+ // Máy không có WebGL (card đồ họa cũ, tắt tăng tốc phần cứng…) thì dùng WASM rồi CPU; phải chỉ đường dẫn tệp WASM trước khi khởi động
+ const WASM='https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.21.0/dist/';
+ const pickBackend=async tf=>{try{tf.setWasmPaths&&tf.setWasmPaths(WASM);}catch(e){}for(const b of ['webgl','wasm','cpu']){try{if(await tf.setBackend(b)){await tf.ready();if(tf.getBackend()===b)return b;}}catch(e){}}throw new Error('Thiết bị không chạy được bộ nhận diện khuôn mặt.');};
+ const loadFace=()=>ready||(ready=(async()=>{await loadScript(LIB);const f=window.faceapi;await pickBackend(f.tf);await Promise.all([f.nets.tinyFaceDetector.loadFromUri(MODELS),f.nets.faceLandmark68Net.loadFromUri(MODELS),f.nets.faceRecognitionNet.loadFromUri(MODELS)]);return f;})().catch(e=>{ready=null;throw e;}));
  const gps=()=>new Promise(ok=>{if(!navigator.geolocation)return ok({});navigator.geolocation.getCurrentPosition(p=>ok({lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy}),e=>ok({gpsError:e.code===1?'Bạn chưa cho phép truy cập vị trí.':'Không lấy được vị trí.'}),{enableHighAccuracy:true,timeout:15000,maximumAge:0});});
  const ip=()=>Promise.race([fetch('https://api.ipify.org?format=json').then(r=>r.json()).then(j=>({ip:j.ip})).catch(()=>({})),new Promise(ok=>setTimeout(()=>ok({}),5000))]);
  function overlay(title){
@@ -33,7 +36,7 @@ window.VegasCapture=window.VegasCapture||(()=>{
   });
  }
  async function run(opts={}){
-  const tasks=[opts.gps?gps():Promise.resolve({}),opts.gps?ip():Promise.resolve({})];
+  const tasks=[opts.gps?gps():Promise.resolve({}),opts.gps||opts.ip?ip():Promise.resolve({})];
   const descriptor=opts.face?await scanFace(opts.title):undefined;
   const [g,i]=await Promise.all(tasks);return {descriptor,...g,...i};
  }
