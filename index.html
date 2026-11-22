@@ -17,10 +17,35 @@ iframe{position:fixed;inset:0;width:100%;height:100%;border:0;display:block}
 </head>
 <body>
 <p class="fallback">Đang mở Cổng Nhân sự… Nếu không hiện, <a href="https://script.google.com/macros/s/AKfycbyHmMAtOxa7DDv5kYE1Y-Al8uLskgEk2fzC7ho-_huiEwYqGaPMasmWbTOCiIIAOByv/exec">bấm vào đây</a>.</p>
-<iframe src="https://script.google.com/macros/s/AKfycbyHmMAtOxa7DDv5kYE1Y-Al8uLskgEk2fzC7ho-_huiEwYqGaPMasmWbTOCiIIAOByv/exec" title="Cổng Nhân sự Vegas Group" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+<iframe id="app" title="Cổng Nhân sự Vegas Group" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 <script>
-// Đổi địa chỉ theo màn hình của Cổng Nhân sự: đăng nhập → /dang-nhap, đã vào → /
-addEventListener("message",function(e){if(!/.googleusercontent.com$/.test(new URL(e.origin).hostname))return;var d=e.data;if(!d||d.type!=="vegas-hr-route")return;var p=["login","setup","change"].indexOf(d.screen)>=0?"/dang-nhap":"/";if(location.pathname!==p||location.search)history.replaceState(null,"",p);});
+(function(){
+var EXEC="https://script.google.com/macros/s/AKfycbyHmMAtOxa7DDv5kYE1Y-Al8uLskgEk2fzC7ho-_huiEwYqGaPMasmWbTOCiIIAOByv/exec";
+// Mục trong web (#…) ↔ địa chỉ dễ đọc
+var ROUTES={"overview":"/tong-quan","profiles":"/nhan-su","departments":"/phong-ban","reports":"/bao-cao-de-xuat","leave":"/nghi-phep","checklist":"/checklist-ca","communications-media":"/truyen-thong/team-media","communications-care":"/truyen-thong/cskh","communications-monitor":"/truyen-thong/giam-sat","communications-content":"/truyen-thong/team-content","wh-in":"/kho-hang-hoa/nhap-hang","wh-out":"/kho-hang-hoa/xuat-hang","wh-stock":"/kho-hang-hoa/luu-kho","wh-manage":"/kho-hang-hoa/quan-ly-kho","wh-comp":"/kho-hang-hoa/den-kho","wh-standard":"/kho-hang-hoa/quy-chuan","wh-sales":"/kho-hang-hoa/ban-hang","wh-audit":"/kho-hang-hoa/kiem-kho","branch-vg1":"/chi-nhanh/co-so-1","branch-vg2":"/chi-nhanh/co-so-2","branch-kld":"/chi-nhanh/co-so-3","payroll-issue":"/ke-toan/gui-phieu-luong","payroll":"/ke-toan/bang-luong","attendance":"/ke-toan/cham-cong","booking":"/ke-toan/booking","cashflow":"/ke-toan/thu-chi","invoices":"/ke-toan/hoa-don","kpi":"/kpi","bod-vg1":"/bao-cao-bgd/chi-nhanh-1","bod-vg2":"/bao-cao-bgd/chi-nhanh-2","bod-kld":"/bao-cao-bgd/chi-nhanh-3","system":"/cai-dat","system/accounts":"/cai-dat/tai-khoan","system/import":"/cai-dat/nhap-tai-khoan","system/permissions":"/cai-dat/phan-quyen","system/activity":"/cai-dat/nhat-ky","system/connection":"/cai-dat/ket-noi"};
+var BACK={};Object.keys(ROUTES).forEach(function(k){BACK[ROUTES[k]]=k;});
+function toPath(hash){
+  var h=String(hash||'').replace(/^#/?/,'');if(!h)return '/';
+  if(ROUTES[h])return ROUTES[h];
+  var m=/^employee/([A-Za-z0-9_-]+)$/.exec(h);if(m)return '/nhan-su/'+m[1];
+  var first=h.split('/')[0];return ROUTES[first]||'/';
+}
+function toHash(path){
+  path=decodeURIComponent(path).replace(//+$/,'')||'/';
+  if(BACK[path])return BACK[path];
+  var m=/^/nhan-su/([A-Za-z0-9_-]+)$/.exec(path);if(m)return 'employee/'+m[1].toUpperCase();
+  return '';
+}
+var start=toHash(location.pathname);
+document.getElementById('app').src=EXEC+(start?'?route='+encodeURIComponent(start):'');
+addEventListener('message',function(e){
+  var host='';try{host=new URL(e.origin).hostname;}catch(x){}
+  if(!/.googleusercontent.com$/.test(host))return;
+  var d=e.data;if(!d||d.type!=='vegas-hr-route')return;
+  var p=['login','setup','change'].indexOf(d.screen)>=0?'/dang-nhap':toPath(d.hash);
+  if(location.pathname!==p||location.search)history.replaceState(null,'',p);
+});
+})();
 </script>
 </body>
 </html>
