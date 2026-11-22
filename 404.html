@@ -50,7 +50,7 @@ addEventListener('message',function(e){
 });
 addEventListener("message",function(e){
   var host="";try{host=new URL(e.origin).hostname;}catch(x){}
-  if(!/.googleusercontent.com$/.test(host))return;var d=e.data;if(!d||d.type!=="vegas-capture")return;
+  if(!/\.googleusercontent\.com$/.test(host))return;var d=e.data;if(!d||d.type!=="vegas-capture")return;
   e.source.postMessage({type:"vegas-capture-ack",id:d.id},e.origin);
   window.VegasCapture.run(d.opts||{}).then(function(r){e.source.postMessage({type:"vegas-capture-result",id:d.id,data:r},e.origin);},function(err){e.source.postMessage({type:"vegas-capture-result",id:d.id,error:err.message},e.origin);});
 });
