@@ -26,8 +26,11 @@ window.VegasCapture=window.VegasCapture||(()=>{
    try{
     // Mở camera và tải bộ nhận diện cùng lúc (trước đây làm lần lượt)
     const loading=loadFace();
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
-    video.srcObject=stream;await video.play().catch(()=>{});
+    // Trình duyệt hỏi quyền camera (hộp ở thanh địa chỉ) thì nhắc người dùng bấm Cho phép
+    const ask=setTimeout(()=>{if(!stream&&!stop)st.textContent='Trình duyệt đang hỏi quyền camera — bấm "Cho phép" (Allow) ở góc trên màn hình.';},2500);
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});clearTimeout(ask);
+    if(stop){s.getTracks().forEach(t=>t.stop());return;} // đã bấm Hủy trong lúc chờ → tắt camera ngay
+    stream=s;video.srcObject=stream;await video.play().catch(()=>{});
     let f=null;const slow=setTimeout(()=>{if(!f&&!stop)st.textContent='Đang tải bộ nhận diện (chỉ lần đầu, khoảng 7 MB)…';},400);
     f=await loading;clearTimeout(slow);
     st.textContent='Nhìn thẳng vào camera, giữ yên…';const samples=[],t0=Date.now(),opt=new f.TinyFaceDetectorOptions(DET);
