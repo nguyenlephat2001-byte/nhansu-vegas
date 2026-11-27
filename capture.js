@@ -16,7 +16,7 @@ window.VegasCapture=window.VegasCapture||(()=>{
  const loadFace=()=>ready||(ready=(async()=>{await loadScript(LIB);const f=window.faceapi,backend=await pickBackend(f.tf);
   const nets=[f.nets.faceLandmark68Net.loadFromUri(MODELS),f.nets.faceRecognitionNet.loadFromUri(MODELS)];
   if(backend==='cpu'){detector='tiny';nets.push(f.nets.tinyFaceDetector.loadFromUri(MODELS));}
-  else{nets.push(f.nets.ssdMobilenetv1.loadFromUri(MODELS).catch(async()=>{detector='tiny';await f.nets.tinyFaceDetector.loadFromUri(MODELS);}));}
+  else{nets.push(f.nets.ssdMobilenetv1.loadFromUri(MODELS).catch(()=>new Promise(r=>setTimeout(r,800)).then(()=>f.nets.ssdMobilenetv1.loadFromUri(MODELS))).catch(async()=>{detector='tiny';await f.nets.tinyFaceDetector.loadFromUri(MODELS);}));}
   await Promise.all(nets);
   try{const c=document.createElement('canvas');c.width=c.height=160;await f.detectSingleFace(c,detOpts(f)).withFaceLandmarks();await f.computeFaceDescriptor(c);}catch(e){}return f;})().catch(e=>{ready=null;throw e;}));
  const detOpts=f=>detector==='ssd'?new f.SsdMobilenetv1Options({minConfidence:.55,maxResults:1}):new f.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:.5});
