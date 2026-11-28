@@ -2,12 +2,12 @@
 /* Chấm công: quét khuôn mặt (face-api.js · SSD MobileNet v1 + 68 điểm + mô tả 128 chiều) + vị trí GPS + IP wifi.
    Dùng chung cho trang ngoài nhansu.karaokevegas.vn (capture.js) và trong web.
    VegasCapture.run({face, gps, title}) → Promise<{descriptor?, samples?, live?, quality?, lat?, lng?, accuracy?, gpsFixes?, ip?}>
-   Quét 10 giây: chỉ giữ khung hình tốt (mặt đủ lớn, nhìn thẳng, rõ nét), bắt buộc chớp mắt (chống ảnh / màn hình),
+   Quét 5 giây: lấy mẫu khi nhìn thẳng (mặt đủ lớn, rõ nét), bắt buộc quay mặt trái rồi phải (chống ảnh / màn hình),
    gửi ~10 mẫu để máy chủ so từng mẫu. GPS theo dõi suốt thời gian quét, giữ điểm có sai số nhỏ nhất. */
 window.VegasCapture=window.VegasCapture||(()=>{
  const LIB='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/dist/face-api.js',MODELS='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model';
  const WASM='https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.21.0/dist/';
- const SCAN_MS=10000,MIN_GOOD=6,MAX_SAMPLES=12;
+ const SCAN_MS=5000,MIN_GOOD=4,MAX_SAMPLES=12;
  let ready=null,detector='ssd';
  const loadScript=src=>new Promise((ok,bad)=>{if(window.faceapi)return ok();const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>bad(new Error('Không tải được bộ nhận diện khuôn mặt. Kiểm tra mạng.'));document.head.append(s);});
  // Máy không có WebGL thì dùng WASM rồi CPU
@@ -38,6 +38,23 @@ window.VegasCapture=window.VegasCapture||(()=>{
  const ear=e=>(dist(e[1],e[5])+dist(e[2],e[4]))/(2*dist(e[0],e[3])); // tỉ lệ mở mắt (Eye Aspect Ratio)
  function pose(lm){const p=lm.positions,l=p.slice(36,42),r=p.slice(42,48),eyeL=p[36],eyeR=p[45],nose=p[30],mid={x:(eyeL.x+eyeR.x)/2,y:(eyeL.y+eyeR.y)/2},w=dist(eyeL,eyeR)||1;
   return {ear:(ear(l)+ear(r))/2,yaw:(nose.x-mid.x)/w,roll:Math.atan2(eyeR.y-eyeL.y,eyeR.x-eyeL.x)*180/Math.PI};}
+ // Camera: mở 1 lần rồi giữ lại (tắt sau 3 phút không dùng) để không phải xin quyền lại mỗi lần quét trong cùng lần mở web
+ let camStream=null,camIdle=null;
+ const camAlive=()=>camStream&&camStream.getVideoTracks().some(t=>t.readyState==='live');
+ async function getCam(){
+  clearTimeout(camIdle);
+  if(camAlive()){camStream.getVideoTracks().forEach(t=>t.enabled=true);return camStream;}
+  camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:720},height:{ideal:960}},audio:false});return camStream;
+ }
+ function releaseCam(){if(!camStream)return;camStream.getVideoTracks().forEach(t=>t.enabled=false);clearTimeout(camIdle);camIdle=setTimeout(()=>{camStream?.getTracks().forEach(t=>t.stop());camStream=null;},180000);}
+ addEventListener('pagehide',()=>{camStream?.getTracks().forEach(t=>t.stop());camStream=null;});
+ // Gợi ý để trình duyệt NHỚ quyền camera (không hỏi lại các lần sau)
+ async function camTip(){
+  const ua=navigator.userAgent||'';
+  if(/Zalo|FBAN|FBAV|Instagram|Line\/|MicroMessenger/i.test(ua))return 'Bạn đang mở trong ứng dụng (Zalo / Facebook…) nên điện thoại sẽ hỏi quyền camera mỗi lần. Hãy mở web bằng Chrome hoặc Safari.';
+  try{const p=await navigator.permissions.query({name:'camera'});if(p.state==='granted')return '';}catch(e){}
+  return /iPhone|iPad|iPod/i.test(ua)?'Lần đầu: bấm "Cho phép". Để không hỏi lại: Cài đặt › Safari › Camera › Cho phép.':'Lần đầu: chọn "Cho phép khi truy cập trang web" / "Allow on every visit" để lần sau không phải hỏi lại.';
+ }
  function overlay(title){
   const o=document.createElement('div');o.className='vc-ov';
   o.innerHTML='<style>.vc-ov{position:fixed;inset:0;z-index:2147483600;background:rgba(10,4,6,.86);display:grid;place-items:center;padding:16px;font:15px system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff}'+
@@ -46,73 +63,79 @@ window.VegasCapture=window.VegasCapture||(()=>{
    '.vc-oval{position:absolute;inset:10% 15% 14%;border-radius:50%;box-shadow:0 0 0 9999px rgba(0,0,0,.38);border:3px solid rgba(255,255,255,.5);transition:border-color .2s}.vc-oval.ok{border-color:#3ddc84}.vc-oval.warn{border-color:#ffb347}'+
    '.vc-ring{position:absolute;right:10px;top:10px;width:58px;height:58px}.vc-ring circle{fill:none;stroke-width:5}.vc-ring .bg{stroke:rgba(255,255,255,.2)}.vc-ring .fg{stroke:#3ddc84;stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .2s linear}'+
    '.vc-ring text{fill:#fff;font:700 17px system-ui;text-anchor:middle;dominant-baseline:central}'+
+   '.vc-arrow{position:absolute;top:50%;width:64px;height:64px;margin-top:-32px;border-radius:50%;background:rgba(139,26,46,.85);display:none;place-items:center;font-size:34px;font-weight:700;animation:vcp 0.9s ease-in-out infinite}.vc-arrow.l{left:8px}.vc-arrow.r{right:8px}.vc-arrow.on{display:grid}'+
+   '@keyframes vcp{0%,100%{transform:translateX(0)}50%{transform:translateX(var(--dx,0))}}.vc-arrow.l{--dx:-8px}.vc-arrow.r{--dx:8px}@media(prefers-reduced-motion:reduce){.vc-arrow{animation:none}}'+
    '.vc-chips{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}.vc-chip{font-size:12.5px;padding:4px 10px;border-radius:999px;background:#2a1c22;color:#d9c2c9}.vc-chip.on{background:#1f3d2c;color:#7ff0a8}.vc-chip.bad{background:#3d2a1a;color:#ffc27a}'+
-   '.vc-st{min-height:40px;margin:0;color:#f1d7dd;line-height:1.4}.vc-btns{display:flex;gap:8px}.vc-btns button{flex:1;border:1px solid #6b4a57;background:transparent;color:#fff;border-radius:12px;padding:11px;font:inherit;cursor:pointer}.vc-btns .vc-retry{background:#8B1A2E;border-color:#8B1A2E}</style>'+
-   '<div class="vc-box" role="dialog" aria-label="Quét khuôn mặt"><h3></h3><div class="vc-cam"><video playsinline muted autoplay></video><span class="vc-oval"></span>'+
-   '<svg class="vc-ring" viewBox="0 0 58 58" aria-hidden="true"><circle class="bg" cx="29" cy="29" r="25"/><circle class="fg" cx="29" cy="29" r="25" stroke-dasharray="157.1" stroke-dashoffset="157.1"/><text x="29" y="29">10</text></svg></div>'+
-   '<div class="vc-chips"><span class="vc-chip" data-c="face">Khuôn mặt</span><span class="vc-chip" data-c="blink">Chớp mắt</span><span class="vc-chip" data-c="gps" hidden>Vị trí</span></div>'+
-   '<p class="vc-st" role="status" aria-live="polite">Đang mở camera…</p><div class="vc-btns"><button type="button" class="vc-x">Hủy</button></div></div>';
+   '.vc-st{min-height:40px;margin:0;color:#f1d7dd;line-height:1.4}.vc-tip{margin:0;font-size:12.5px;color:#c9a9b3;line-height:1.4}.vc-btns{display:flex;gap:8px}.vc-btns button{flex:1;border:1px solid #6b4a57;background:transparent;color:#fff;border-radius:12px;padding:11px;font:inherit;cursor:pointer}.vc-btns .vc-retry{background:#8B1A2E;border-color:#8B1A2E}</style>'+
+   '<div class="vc-box" role="dialog" aria-label="Quét khuôn mặt"><h3></h3><div class="vc-cam"><video playsinline muted autoplay></video><span class="vc-oval"></span><span class="vc-arrow l" aria-hidden="true">‹</span><span class="vc-arrow r" aria-hidden="true">›</span>'+
+   '<svg class="vc-ring" viewBox="0 0 58 58" aria-hidden="true"><circle class="bg" cx="29" cy="29" r="25"/><circle class="fg" cx="29" cy="29" r="25" stroke-dasharray="157.1" stroke-dashoffset="157.1"/><text x="29" y="29">'+Math.round(SCAN_MS/1000)+'</text></svg></div>'+
+   '<div class="vc-chips"><span class="vc-chip" data-c="face">Khuôn mặt</span><span class="vc-chip" data-c="left">Quay trái</span><span class="vc-chip" data-c="right">Quay phải</span><span class="vc-chip" data-c="gps" hidden>Vị trí</span></div>'+
+   '<p class="vc-st" role="status" aria-live="polite">Đang mở camera…</p><p class="vc-tip" hidden></p><div class="vc-btns"><button type="button" class="vc-x">Hủy</button></div></div>';
   o.querySelector('h3').textContent=title||'Quét khuôn mặt';document.body.append(o);return o;
  }
- // Quét 10 giây → {descriptor, samples, live, quality}
+ // Quét 5 giây: nhìn thẳng (lấy mẫu) → quay mặt sang trái → sang phải (chống ảnh / video giả). Trả {descriptor, samples, live, quality}
  async function scanFace(title,g){
-  const o=overlay(title),st=o.querySelector('.vc-st'),video=o.querySelector('video'),oval=o.querySelector('.vc-oval'),fg=o.querySelector('.vc-ring .fg'),num=o.querySelector('.vc-ring text');
+  const o=overlay(title),st=o.querySelector('.vc-st'),tip=o.querySelector('.vc-tip'),video=o.querySelector('video'),oval=o.querySelector('.vc-oval'),fg=o.querySelector('.vc-ring .fg'),num=o.querySelector('.vc-ring text');
+  const arrL=o.querySelector('.vc-arrow.l'),arrR=o.querySelector('.vc-arrow.r');
   const chip=k=>o.querySelector('[data-c="'+k+'"]');let stream=null,stop=false,gpsTimer=null;
   if(g){chip('gps').hidden=false;gpsTimer=setInterval(()=>{const f=g.fixes;if(!f.length)return;const a=Math.round(Math.min(...f.map(x=>x.accuracy)));const c=chip('gps');c.textContent='Vị trí ±'+a+' m';c.classList.toggle('on',a<=50);c.classList.toggle('bad',a>50);},500);}
-  const cleanup=()=>{stop=true;clearInterval(gpsTimer);stream?.getTracks().forEach(t=>t.stop());o.remove();};
+  const cleanup=()=>{stop=true;clearInterval(gpsTimer);releaseCam();o.remove();};
   return new Promise(async(ok,bad)=>{
    o.querySelector('.vc-x').onclick=()=>{cleanup();bad(new Error('Đã hủy quét khuôn mặt.'));};
    try{
     const loading=loadFace();
-    const ask=setTimeout(()=>{if(!stream&&!stop)st.textContent='Trình duyệt đang hỏi quyền camera — bấm "Cho phép" (Allow) ở góc trên màn hình.';},2500);
-    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:720},height:{ideal:960}},audio:false});clearTimeout(ask);
-    if(stop){s.getTracks().forEach(t=>t.stop());return;}
+    if(!camAlive()){const tx=await camTip();if(tx){tip.textContent=tx;tip.hidden=false;}}
+    const ask=setTimeout(()=>{if(!stream&&!stop)st.textContent='Trình duyệt đang hỏi quyền camera — bấm "Cho phép" (Allow).';},1500);
+    const s=await getCam();clearTimeout(ask);
+    if(stop){releaseCam();return;}
     stream=s;video.srcObject=stream;await video.play().catch(()=>{});
     let f=null;const slow=setTimeout(()=>{if(!f&&!stop)st.textContent='Đang tải bộ nhận diện (chỉ lần đầu)…';},400);
     f=await loading;clearTimeout(slow);if(stop)return;
-    const opt=detOpts(f),good=[];let blink=false,eyesOpen=false,minEar=1,t0=0,faceSeen=0,lastMsg='';
+    tip.hidden=true;
+    const opt=detOpts(f),good=[];let turnL=false,turnR=false,t0=0,faceSeen=0,lastMsg='';
     const say=m=>{if(m!==lastMsg){st.textContent=m;lastMsg=m;}};
     say('Đặt mặt vào khung oval, nhìn thẳng camera…');
     while(!stop){
-     if(video.readyState<2){await new Promise(r=>setTimeout(r,60));continue;}
+     if(video.readyState<2){await new Promise(r=>setTimeout(r,50));continue;}
      const r=await f.detectSingleFace(video,opt).withFaceLandmarks().withFaceDescriptor();if(stop)break;
      const vw=video.videoWidth||640,vh=video.videoHeight||480;
-     let ok1=false,why='';
+     let ok1=false,why='',need='';
      if(r){const b=r.detection.box,p=pose(r.landmarks),cx=(b.x+b.width/2)/vw,cy=(b.y+b.height/2)/vh;
-      if(!t0){t0=Date.now();} faceSeen=Date.now();
-      // Chớp mắt: mắt đang mở (EAR cao) rồi khép lại (EAR thấp)
-      if(p.ear>.26)eyesOpen=true;if(eyesOpen&&p.ear<.2){blink=true;}minEar=Math.min(minEar,p.ear);
-      if(b.width<vw*.28)why='Đưa mặt lại gần camera hơn.';
-      else if(b.width>vw*.85)why='Lùi ra xa một chút.';
-      else if(Math.abs(cx-.5)>.18||Math.abs(cy-.5)>.22)why='Đưa mặt vào giữa khung oval.';
-      else if(Math.abs(p.yaw)>.16)why='Nhìn thẳng vào camera, đừng quay nghiêng.';
-      else if(Math.abs(p.roll)>12)why='Giữ đầu thẳng, đừng nghiêng.';
-      else if(r.detection.score<(detector==='ssd'?.8:.65))why='Hình chưa rõ — tìm chỗ đủ sáng, bỏ khẩu trang / kính râm.';
-      else if(p.ear>.22){ok1=true;good.push({d:Array.from(r.descriptor),s:r.detection.score});}
-     }else why=t0&&Date.now()-faceSeen<1500?'Giữ yên…':'Chưa thấy khuôn mặt — đưa mặt vào khung, quay về phía đèn.';
-     oval.classList.toggle('ok',ok1);oval.classList.toggle('warn',!!r&&!ok1);
+      if(!t0)t0=Date.now();faceSeen=Date.now();
+      // Ảnh camera trước chưa lật: người dùng quay sang TRÁI của họ → mũi lệch về bên phải ảnh (yaw dương)
+      if(good.length>=2&&p.yaw>.2)turnL=true;
+      if(turnL&&p.yaw<-.2)turnR=true;
+      need=good.length<2?'':!turnL?'left':!turnR?'right':'';
+      if(b.width<vw*.26)why='Đưa mặt lại gần camera hơn.';
+      else if(b.width>vw*.88)why='Lùi ra xa một chút.';
+      else if(Math.abs(cx-.5)>.22||Math.abs(cy-.5)>.24)why='Đưa mặt vào giữa khung oval.';
+      else if(Math.abs(p.roll)>14)why='Giữ đầu thẳng, đừng nghiêng.';
+      else if(r.detection.score<(detector==='ssd'?.75:.6))why='Hình chưa rõ — tìm chỗ đủ sáng, bỏ khẩu trang / kính râm.';
+      else if(Math.abs(p.yaw)<.12&&p.ear>.2){ok1=true;good.push({d:Array.from(r.descriptor),s:r.detection.score});}
+     }else why=t0&&Date.now()-faceSeen<1200?'Giữ mặt trong khung…':'Chưa thấy khuôn mặt — đưa mặt vào khung, quay về phía đèn.';
+     oval.classList.toggle('ok',ok1);oval.classList.toggle('warn',!!r&&!ok1&&!need);
+     arrL.classList.toggle('on',need==='left');arrR.classList.toggle('on',need==='right');
      chip('face').classList.toggle('on',good.length>=MIN_GOOD);chip('face').textContent='Khuôn mặt '+Math.min(good.length,MIN_GOOD)+'/'+MIN_GOOD;
-     chip('blink').classList.toggle('on',blink);chip('blink').textContent=blink?'Đã chớp mắt ✓':'Chớp mắt';
-     // Đồng hồ 10 giây bắt đầu khi thấy khuôn mặt
+     chip('left').classList.toggle('on',turnL);chip('left').textContent=turnL?'Quay trái ✓':'Quay trái';
+     chip('right').classList.toggle('on',turnR);chip('right').textContent=turnR?'Quay phải ✓':'Quay phải';
      const left=t0?Math.max(0,SCAN_MS-(Date.now()-t0)):SCAN_MS;fg.setAttribute('stroke-dashoffset',(157.1*left/SCAN_MS).toFixed(1));num.textContent=Math.ceil(left/1000);
-     if(t0)say(why||(!blink?'Tốt — giữ yên và chớp mắt 1–2 lần.':'Tốt — giữ yên đến khi hết giờ…'));
+     if(t0)say(need==='left'?'Quay mặt sang TRÁI ‹':need==='right'?'Giờ quay mặt sang PHẢI ›':why||(good.length<MIN_GOOD?'Nhìn thẳng camera, giữ yên…':'Xong — nhìn thẳng camera…'));
+     // Đủ mẫu + đã quay 2 bên → xong ngay, không cần chờ hết giờ
+     if(good.length>=MIN_GOOD&&turnL&&turnR){cleanup();return ok(pack(good));}
      if(t0&&left<=0){
-      if(good.length>=MIN_GOOD&&blink){cleanup();return ok(pack(good));}
-      // Hết 10 giây mà chưa đủ: báo rõ lý do, cho quét lại
-      const reason=!blink?'Chưa thấy bạn chớp mắt (để chống dùng ảnh).':'Chưa đủ khung hình rõ ('+good.length+'/'+MIN_GOOD+').';
-      stop=true;stream.getTracks().forEach(t=>t.stop());clearInterval(gpsTimer);
-      st.textContent=reason+' Bấm "Quét lại", nhìn thẳng, đủ sáng và chớp mắt.';
+      const reason=!turnL||!turnR?'Chưa thấy bạn quay mặt sang '+(!turnL?'trái':'phải')+' (để chống dùng ảnh).':'Chưa đủ khung hình rõ ('+good.length+'/'+MIN_GOOD+').';
+      stop=true;clearInterval(gpsTimer);arrL.classList.remove('on');arrR.classList.remove('on');
+      st.textContent=reason+' Bấm "Quét lại": nhìn thẳng, rồi quay trái, quay phải.';
       const btns=o.querySelector('.vc-btns'),retry=document.createElement('button');retry.type='button';retry.className='vc-retry';retry.textContent='Quét lại';btns.append(retry);
       retry.onclick=()=>{o.remove();scanFace(title,g).then(ok,bad);};
-      o.querySelector('.vc-x').onclick=()=>{o.remove();bad(new Error('Đã hủy quét khuôn mặt.'));};
+      o.querySelector('.vc-x').onclick=()=>{releaseCam();o.remove();bad(new Error('Đã hủy quét khuôn mặt.'));};
       return;
      }
-     await new Promise(r=>setTimeout(r,ok1?90:140));
+     await new Promise(r=>setTimeout(r,60));
     }
-   }catch(e){cleanup();bad(new Error(e&&e.name==='NotAllowedError'?'Bạn chưa cho phép dùng camera.':e.message||'Không mở được camera.'));}
+   }catch(e){cleanup();bad(new Error(e&&e.name==='NotAllowedError'?'Bạn chưa cho phép dùng camera. Mở cài đặt trang web (biểu tượng ổ khóa cạnh địa chỉ) › Camera › Cho phép.':e.message||'Không mở được camera.'));}
   });
- }
- // Bỏ mẫu lệch nhiều so với trung bình, giữ tối đa 12 mẫu rõ nhất
+ } // Bỏ mẫu lệch nhiều so với trung bình, giữ tối đa 12 mẫu rõ nhất
  function pack(good){
   const mean=list=>list[0].map((_,i)=>list.reduce((s,d)=>s+d[i],0)/list.length);
   let d=good.map(x=>x.d);const m0=mean(d),dd=v=>Math.sqrt(v.reduce((s,x,i)=>s+(x-m0[i])**2,0));
