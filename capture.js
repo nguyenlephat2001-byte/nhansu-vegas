@@ -28,9 +28,19 @@ window.VegasCapture=window.VegasCapture||(()=>{
    id=navigator.geolocation.watchPosition(p=>{fixes.push({lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy,t:Date.now()});},e=>{err=e.code===1?'Bạn chưa cho phép truy cập vị trí.':'Không lấy được vị trí.';if(e.code===1)ok();},{enableHighAccuracy:true,timeout:20000,maximumAge:0});
    watchGps.stopper=ok;
   });
-  return {fixes,stop:async(waitMs=0)=>{const t0=Date.now();while(waitMs&&Date.now()-t0<waitMs&&!(fixes.length&&Math.min(...fixes.map(x=>x.accuracy))<=30))await new Promise(r=>setTimeout(r,250));if(id!==null)navigator.geolocation.clearWatch(id);
+  // Chờ tới khi có ≥3 điểm đạt sai số mục tiêu (hoặc hết thời gian); trong lúc chờ hiện "Đang bắt định vị chính xác ±x m"
+  const fine=t=>fixes.filter(x=>x.accuracy<=t).length;
+  return {fixes,stop:async(waitMs=0,target=10)=>{const t0=Date.now();let ui=null;
+   while(waitMs&&Date.now()-t0<waitMs&&!(fine(target)>=3)&&!(err&&!fixes.length&&Date.now()-t0>3000)){
+    if(!ui&&Date.now()-t0>600){ui=document.createElement('div');ui.setAttribute('role','status');ui.style.cssText='position:fixed;inset:0;z-index:2147483600;display:grid;place-items:center;background:rgba(10,4,6,.78);color:#fff;font:15px system-ui,-apple-system,"Segoe UI",sans-serif;text-align:center;padding:16px';document.body.append(ui);}
+    if(ui){const b=fixes.length?Math.round(Math.min(...fixes.map(x=>x.accuracy))):null;ui.innerHTML='<div style="background:#1a1014;border-radius:18px;padding:18px 20px;max-width:340px;line-height:1.45"><b>Đang bắt định vị chính xác…</b><br>'+(b===null?'Đang chờ GPS':'Sai số hiện tại ±'+b+' m')+'<br><small style="color:#c9a9b3">Giữ yên điện thoại, bật Vị trí chính xác, đứng chỗ thoáng.</small></div>';}
+    await new Promise(r=>setTimeout(r,250));}
+   ui?.remove();if(id!==null)navigator.geolocation.clearWatch(id);
    if(!fixes.length)return {gpsError:err||'Không lấy được vị trí (bật GPS / định vị chính xác rồi thử lại).'};
-   const best=fixes.reduce((a,b)=>b.accuracy<a.accuracy?b:a);return {lat:best.lat,lng:best.lng,accuracy:best.accuracy,gpsFixes:fixes.length};}};
+   // Lấy trung bình có trọng số (1/sai số²) các điểm tốt nhất để giảm nhiễu GPS → vị trí sát thực tế hơn 1 điểm đơn lẻ
+   const best=Math.min(...fixes.map(x=>x.accuracy)),good=fixes.filter(x=>x.accuracy<=best+3).slice(-15);
+   let w=0,la=0,lo=0;good.forEach(x=>{const k=1/Math.max(1,x.accuracy)**2;w+=k;la+=x.lat*k;lo+=x.lng*k;});
+   return {lat:la/w,lng:lo/w,accuracy:best,gpsFixes:fixes.length};}};
  }
  const ip=()=>Promise.race([fetch('https://api.ipify.org?format=json').then(r=>r.json()).then(j=>({ip:j.ip})).catch(()=>({})),new Promise(ok=>setTimeout(()=>ok({}),5000))]);
  // ---- Hình học khuôn mặt từ 68 điểm ----
@@ -78,7 +88,7 @@ window.VegasCapture=window.VegasCapture||(()=>{
   const o=overlay(title),st=o.querySelector('.vc-st'),tip=o.querySelector('.vc-tip'),video=o.querySelector('video'),oval=o.querySelector('.vc-oval'),fg=o.querySelector('.vc-ring .fg'),num=o.querySelector('.vc-ring text');
   const arrL=o.querySelector('.vc-arrow.l'),arrR=o.querySelector('.vc-arrow.r');
   const chip=k=>o.querySelector('[data-c="'+k+'"]');let stream=null,stop=false,gpsTimer=null;
-  if(g){chip('gps').hidden=false;gpsTimer=setInterval(()=>{const f=g.fixes;if(!f.length)return;const a=Math.round(Math.min(...f.map(x=>x.accuracy)));const c=chip('gps');c.textContent='Vị trí ±'+a+' m';c.classList.toggle('on',a<=50);c.classList.toggle('bad',a>50);},500);}
+  if(g){chip('gps').hidden=false;gpsTimer=setInterval(()=>{const f=g.fixes;if(!f.length)return;const a=Math.round(Math.min(...f.map(x=>x.accuracy)));const c=chip('gps');c.textContent='Vị trí ±'+a+' m';c.classList.toggle('on',a<=10);c.classList.toggle('bad',a>10);},500);}
   const cleanup=()=>{stop=true;clearInterval(gpsTimer);releaseCam();o.remove();};
   return new Promise(async(ok,bad)=>{
    o.querySelector('.vc-x').onclick=()=>{cleanup();bad(new Error('Đã hủy quét khuôn mặt.'));};
@@ -149,8 +159,9 @@ window.VegasCapture=window.VegasCapture||(()=>{
   const g=opts.gps?watchGps():null,ipTask=opts.gps||opts.ip?ip():Promise.resolve({});
   let face={};
   if(opts.face)face=await scanFace(opts.title,g).catch(async e=>{if(g)await g.stop();throw e;});
-  // Không quét mặt (VD "Lấy vị trí hiện tại"): chờ tối đa 12 giây để GPS chính xác dần
-  const pos=g?await g.stop(opts.face?2500:12000):{};
+  // Chấm công: sau 5 giây quét mặt chờ thêm tối đa 10 giây tới khi GPS đạt ±10 m.
+  // "Lấy vị trí hiện tại" (cài tọa độ cơ sở): chờ tối đa 20 giây tới khi đạt ±5 m để tọa độ gốc thật chuẩn.
+  const pos=g?await g.stop(opts.face?10000:20000,opts.face?10:5):{};
   return {...face,...pos,...await ipTask};
  }
  return {run};
